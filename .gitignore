@@ -1,0 +1,9 @@
+data/
+pic/*/
+pic/*_cropped/
+pic/*_stitched/
+videos/*.mp4
+videos/*.mov
+__pycache__/
+*.pyc
+*.pyo
