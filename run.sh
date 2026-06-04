@@ -36,6 +36,8 @@ for VIDEO in "${VIDEOS[@]}"; do
     FOLDER="$(basename "$VIDEO" | sed 's/\.[^.]*$//')"
     echo "  >>> $VIDEO -> pic/$FOLDER/"
     python3 "$SCRIPT_DIR/extract_frames.py" "$VIDEO"
+    touch "$SCRIPT_DIR/data/${FOLDER}.txt"
+    echo "       data/${FOLDER}.txt"
 done
 
 echo ""
