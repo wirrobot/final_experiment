@@ -51,5 +51,5 @@ if __name__ == "__main__":
     else:
         video_name = sys.argv[1]
 
-    interval = float(sys.argv[2]) if len(sys.argv) > 2 else 0.1
+    interval = float(sys.argv[2]) if len(sys.argv) > 2 else 0.2
     extract_frames(video_name, interval)

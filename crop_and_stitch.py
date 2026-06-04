@@ -1,18 +1,21 @@
 """
 crop_and_stitch.py
 Batch crop images using a user-selected rectangle on the first image,
-then stitch cropped images into grids with configurable dimensions.
+then stitch cropped images into grids.
+
+Subcommands:
+    select_region <folder>      打开首张图框选裁剪区域，保存坐标
+    process <folder> <cols>*<rows> [last_cols>*<last_rows>]
+                                用已保存的区域裁剪拼接，[last] 为最后一页尺寸
 
 Format: 宽*高  (小数在前, 大数在后)
 
-Usage:
-    python crop_and_stitch.py <folder_name> <cols>*<rows>
-
-Example:
-    python crop_and_stitch.py try 3*8
-    (stitches 24 images per grid, then asks for the size of the last grid)
+Examples:
+    python crop_and_stitch.py select_region try
+    python crop_and_stitch.py process try 3*8
+    python crop_and_stitch.py process try 3*8 2*5
 """
-import os, sys, math
+import os, sys, json, math
 from PIL import Image
 import numpy as np
 import matplotlib
@@ -21,11 +24,13 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import RectangleSelector
 
 
+CROPPED_DIR = os.path.join("pic", "cropped")
+STITCHED_DIR = os.path.join("pic", "stitched")
+
+
+# ---- 框选裁剪区域 ----
+
 def select_region(image_path):
-    """
-    Display the first image and let the user drag a rectangle
-    to select the crop region.  Uses matplotlib RectangleSelector.
-    """
     img = Image.open(image_path)
     img_array = np.array(img)
 
@@ -42,12 +47,12 @@ def select_region(image_path):
     def on_select(eclick, erelease):
         x1, y1 = int(eclick.xdata), int(eclick.ydata)
         x2, y2 = int(erelease.xdata), int(erelease.ydata)
-        region[0] = (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+        region[0] = [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
         w, h = region[0][2] - region[0][0], region[0][3] - region[0][1]
         print(f"Selected: ({region[0][0]}, {region[0][1]}) -> "
               f"({region[0][2]}, {region[0][3]})  {w}x{h}")
 
-    rs = RectangleSelector(
+    RectangleSelector(
         ax, on_select, useblit=True, button=[1],
         minspanx=5, minspany=5, spancoords="pixels", interactive=True,
     )
@@ -59,8 +64,33 @@ def select_region(image_path):
     return region[0]
 
 
+def cmd_select_region(folder):
+    """框选并保存裁剪坐标到 pic/cropped/<folder>/region.json"""
+    input_dir = os.path.join("pic", folder)
+    files = sorted([f for f in os.listdir(input_dir)
+                   if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp'))])
+    if not files:
+        print(f"No images in {input_dir}")
+        sys.exit(1)
+
+    first_img = os.path.join(input_dir, files[0])
+    print(f"Opening: {first_img}")
+    region = select_region(first_img)
+    if region is None:
+        print("No region selected. Exiting.")
+        sys.exit(1)
+
+    out_dir = os.path.join(CROPPED_DIR, folder)
+    os.makedirs(out_dir, exist_ok=True)
+    cfg_path = os.path.join(out_dir, "region.json")
+    with open(cfg_path, "w") as f:
+        json.dump({"region": region}, f)
+    print(f"Region saved to {cfg_path}")
+
+
+# ---- 批量裁剪 ----
+
 def crop_all(input_dir, output_dir, region):
-    """Crop every image using the given region (x1, y1, x2, y2)."""
     os.makedirs(output_dir, exist_ok=True)
     x1, y1, x2, y2 = region
 
@@ -76,11 +106,11 @@ def crop_all(input_dir, output_dir, region):
     return files
 
 
+# ---- 拼接 ----
+
 def stitch_grid(files, crop_dir, out_path, rows, cols):
-    """Stitch a slice of files into a rows x cols grid."""
     if not files:
         return
-
     first = Image.open(os.path.join(crop_dir, files[0]))
     cell_w, cell_h = first.size
 
@@ -100,15 +130,22 @@ def stitch_grid(files, crop_dir, out_path, rows, cols):
     print(f"  Saved {min(len(files), rows * cols)} images ({rows}x{cols}) -> {out_path}")
 
 
-def main():
-    if len(sys.argv) < 3:
-        print("Usage: python crop_and_stitch.py <folder_name> <rows>*<cols>")
-        print("  folder_name : subfolder under pic/ (e.g. 'try')")
-        print("  rows*cols   : target grid size (e.g. 3*8)")
+# ---- 批量处理 ----
+
+def cmd_process(folder, grid_spec, last_spec=None):
+    """加载已保存的裁剪区域，执行裁剪+拼接"""
+    input_dir = os.path.join("pic", folder)
+    crop_dir = os.path.join(CROPPED_DIR, folder)
+    stitch_dir = os.path.join(STITCHED_DIR, folder)
+    cfg_path = os.path.join(crop_dir, "region.json")
+
+    if not os.path.exists(cfg_path):
+        print(f"Error: region config not found at {cfg_path}. Run 'select_region' first.")
         sys.exit(1)
 
-    folder = sys.argv[1]
-    grid_spec = sys.argv[2]
+    with open(cfg_path, "r") as f:
+        cfg = json.load(f)
+    region = cfg["region"]
 
     try:
         grid_cols, grid_rows = map(int, grid_spec.split("*"))
@@ -116,82 +153,86 @@ def main():
         print(f"Error: invalid grid spec '{grid_spec}'. Use format like '3*8'")
         sys.exit(1)
 
-    if grid_cols < 1 or grid_rows < 1:
-        print("Error: cols and rows must be >= 1")
-        sys.exit(1)
+    cropped_files = crop_all(input_dir, crop_dir, region)
 
-    input_dir = os.path.join("pic", folder)
-    if not os.path.isdir(input_dir):
-        print(f"Error: folder '{input_dir}' not found")
-        sys.exit(1)
-
-    image_files = sorted(
-        [f for f in os.listdir(input_dir)
-         if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp'))]
-    )
-    total = len(image_files)
-    if not image_files:
-        print(f"No images in {input_dir}")
-        sys.exit(1)
-
-    per_grid = grid_rows * grid_cols
+    total = len(cropped_files)
+    per_grid = grid_cols * grid_rows
     full_grids = total // per_grid
     remainder = total % per_grid
 
-    print(f"Folder:  {folder}")
-    print(f"Images:  {total}")
-    print(f"Grid:    {grid_cols}*{grid_rows} = {per_grid} per grid")
-    print(f"Output:  {full_grids} full grid(s)")
-    if remainder > 0:
-        print(f"Residue: {remainder} image(s) need a last-grid size")
-    print()
-
-    first_img = os.path.join(input_dir, image_files[0])
-    region = select_region(first_img)
-    if region is None:
-        print("No region selected. Exiting.")
-        sys.exit(1)
-
-    crop_dir = os.path.join("pic", f"{folder}_cropped")
-    cropped_files = crop_all(input_dir, crop_dir, region)
-
-    stitch_dir = os.path.join("pic", f"{folder}_stitched")
     os.makedirs(stitch_dir, exist_ok=True)
 
     # Full grids
     for g in range(full_grids):
         start = g * per_grid
         end = start + per_grid
-        page_files = cropped_files[start:end]
         out_path = os.path.join(stitch_dir, f"stitched_{g + 1:02d}.png")
-        stitch_grid(page_files, crop_dir, out_path, grid_rows, grid_cols)
+        stitch_grid(cropped_files[start:end], crop_dir, out_path, grid_rows, grid_cols)
 
     # Remainder
     if remainder > 0:
         remain_files = cropped_files[full_grids * per_grid:]
-        msg = f"\nRemaining {remainder} image(s).\n" \
-              f"Enter last-grid size (e.g. '2*5') or press Enter to skip: "
-        while True:
-            sys.stdout.write(msg)
-            sys.stdout.flush()
-            last_spec = sys.stdin.readline().strip()
-            if not last_spec:
-                print("Skipped last grid.")
-                break
+        if last_spec is not None:
             try:
                 lc, lr = map(int, last_spec.split("*"))
             except ValueError:
-                print("Invalid format, use e.g. '2*5'")
-                continue
-            if lc * lr < remainder:
-                print(f"Grid {lc}*{lr} ({lc*lr}) is too small for "
-                      f"{remainder} images. Try again.")
-                continue
-            out_path = os.path.join(stitch_dir, f"stitched_last.png")
-            stitch_grid(remain_files, crop_dir, out_path, lr, lc)
-            break
+                print(f"Error: invalid last-grid spec '{last_spec}'")
+                sys.exit(1)
+        else:
+            msg = f"\nRemaining {remainder} image(s).\n" \
+                  f"Enter last-grid size (e.g. '2*5') or press Enter to skip: "
+            while True:
+                sys.stdout.write(msg)
+                sys.stdout.flush()
+                last_spec = sys.stdin.readline().strip()
+                if not last_spec:
+                    print("Skipped last grid.")
+                    return
+                try:
+                    lc, lr = map(int, last_spec.split("*"))
+                except ValueError:
+                    print("Invalid format, use e.g. '2*5'")
+                    continue
+                if lc * lr < remainder:
+                    print(f"Grid {lc}*{lr} ({lc*lr}) is too small for "
+                          f"{remainder} images. Try again.")
+                    continue
+                break
 
-    print("\nDone.")
+        if lc * lr < remainder:
+            print(f"Error: last-grid {lc}*{lr} ({lc*lr}) too small for {remainder} images")
+            sys.exit(1)
+        out_path = os.path.join(stitch_dir, "stitched_last.png")
+        stitch_grid(remain_files, crop_dir, out_path, lr, lc)
+
+    print(f"\nDone: {folder}")
+
+
+# ---- 入口 ----
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage:")
+        print("  python crop_and_stitch.py select_region <folder>")
+        print("  python crop_and_stitch.py process <folder> <cols>*<rows> [last_cols>*<last_rows>]")
+        sys.exit(1)
+
+    cmd = sys.argv[1]
+    folder = sys.argv[2]
+
+    if cmd == "select_region":
+        cmd_select_region(folder)
+    elif cmd == "process":
+        if len(sys.argv) < 4:
+            print("Error: 'process' needs grid spec, e.g. '3*8'")
+            sys.exit(1)
+        grid_spec = sys.argv[3]
+        last_spec = sys.argv[4] if len(sys.argv) >= 5 else None
+        cmd_process(folder, grid_spec, last_spec)
+    else:
+        print(f"Unknown command: {cmd}")
+        print("Use 'select_region' or 'process'")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
