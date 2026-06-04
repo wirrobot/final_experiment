@@ -1,9 +1,11 @@
-data/
+data/*
+!data/.gitkeep
 pic/*/
 pic/*_cropped/
 pic/*_stitched/
-videos/*.mp4
-videos/*.mov
+!pic/.gitkeep
+videos/*
+!videos/.gitkeep
 __pycache__/
 *.pyc
 *.pyo
