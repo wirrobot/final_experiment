@@ -108,6 +108,38 @@ def crop_all(input_dir, output_dir, region):
 
 # ---- 拼接 ----
 
+MAX_SIZE_MB = 10
+
+
+def _save_under_limit(img, out_path, max_mb=MAX_SIZE_MB):
+    """Save image, compressing further if it exceeds max_mb."""
+    max_bytes = max_mb * 1024 * 1024
+
+    # Try optimized PNG first
+    img.save(out_path, format="PNG", optimize=True)
+    if os.path.getsize(out_path) <= max_bytes:
+        return
+
+    # Try palette-mode PNG (works well for LCD displays with few colors)
+    if img.mode != "P":
+        pal = img.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
+        pal.save(out_path, format="PNG", optimize=True)
+    if os.path.getsize(out_path) <= max_bytes:
+        return
+
+    # Fallback: JPEG with quality reduction
+    jpg_path = os.path.splitext(out_path)[0] + ".jpg"
+    for q in [85, 70, 50]:
+        img.convert("RGB").save(jpg_path, format="JPEG", quality=q, optimize=True)
+        if os.path.getsize(jpg_path) <= max_bytes:
+            print(f"  (switched to JPEG q={q})")
+            # If we saved as jpg, rename to match original extension expectations
+            if jpg_path != out_path:
+                os.replace(jpg_path, out_path)
+            return
+    os.replace(jpg_path, out_path)
+
+
 def stitch_grid(files, crop_dir, out_path, rows, cols):
     if not files:
         return
@@ -117,7 +149,6 @@ def stitch_grid(files, crop_dir, out_path, rows, cols):
     grid_w = cols * cell_w
     grid_h = rows * cell_h
     grid_img = Image.new("RGB", (grid_w, grid_h), (255, 255, 255))
-
     for idx, fn in enumerate(files):
         if idx >= rows * cols:
             break
@@ -126,8 +157,9 @@ def stitch_grid(files, crop_dir, out_path, rows, cols):
         img = Image.open(os.path.join(crop_dir, fn))
         grid_img.paste(img, (c * cell_w, r * cell_h))
 
-    grid_img.save(out_path)
-    print(f"  Saved {min(len(files), rows * cols)} images ({rows}x{cols}) -> {out_path}")
+    _save_under_limit(grid_img, out_path)
+    mb = os.path.getsize(out_path) / 1024 / 1024
+    print(f"  Saved {min(len(files), rows * cols)} images ({rows}x{cols}) -> {out_path} ({mb:.1f} MB)")
 
 
 # ---- 批量处理 ----
