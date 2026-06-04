@@ -38,11 +38,12 @@ def select_region(image_path):
     ax.imshow(img_array)
     ax.set_title(
         f"{os.path.basename(image_path)}  |  "
-        "Drag to select crop region, then close window",
+        "Click-drag to select crop region, then close window",
         fontsize=10,
     )
 
     region = [None]
+    selector = [None]  # keep reference alive to prevent GC
 
     def on_select(eclick, erelease):
         x1, y1 = int(eclick.xdata), int(eclick.ydata)
@@ -52,15 +53,23 @@ def select_region(image_path):
         print(f"Selected: ({region[0][0]}, {region[0][1]}) -> "
               f"({region[0][2]}, {region[0][3]})  {w}x{h}")
 
-    RectangleSelector(
-        ax, on_select, useblit=True, button=[1],
-        minspanx=5, minspany=5, spancoords="pixels", interactive=True,
+    selector[0] = RectangleSelector(
+        ax, on_select,
+        useblit=False,
+        button=[1],
+        minspanx=5, minspany=5,
+        spancoords="pixels",
+        interactive=True,
+        props=dict(facecolor="none", edgecolor="lime", linewidth=2, alpha=1),
     )
-    fig.canvas.manager.set_window_title("Select crop region - close window when done")
 
+    fig.canvas.manager.set_window_title("Select crop region - close window when done")
     plt.tight_layout()
     plt.show()
     plt.close("all")
+
+    if selector[0] is not None:
+        selector[0].disconnect_events()
     return region[0]
 
 
